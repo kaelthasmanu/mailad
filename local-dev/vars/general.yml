@@ -9,6 +9,7 @@
 # misc
 timezone: "America/Havana"
 domain: mailad.cu
+mailad_at: /home/pavel/Documents/Software/MailAD_Family/mailad
 
 # repo sources
 # I use a local nginx reverse proxy to cache all the files downloaded to speedup the process
