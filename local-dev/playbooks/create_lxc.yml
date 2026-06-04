@@ -99,12 +99,92 @@
       when: item.key not in existing_lxcs.stdout_lines
       tags: create
 
+    - name: Ensure host LXC bridge is enabled in /etc/default/lxc
+      lineinfile:
+        path: /etc/default/lxc
+        regexp: '^USE_LXC_BRIDGE=' 
+        line: 'USE_LXC_BRIDGE="true"'
+        create: yes
+        backup: yes
+
+    - name: Ensure lxc-net service is running so lxcbr0 exists
+      systemd:
+        name: lxc-net
+        state: restarted
+        enabled: yes
+
+    - name: Confirm lxcbr0 exists on host
+      shell: ip link show lxcbr0
+      register: lxcbr0_check
+      changed_when: false
+      failed_when: lxcbr0_check.rc != 0
+
+    - name: Allow forwarding for LXC bridge on host
+      shell: |
+        if ! nft list chain ip filter FORWARD | grep -q 'iifname "lxcbr0" accept'; then
+          nft insert rule ip filter FORWARD position 0 iifname "lxcbr0" accept
+          echo inserted_iif
+        fi
+        if ! nft list chain ip filter FORWARD | grep -q 'oifname "lxcbr0" accept'; then
+          nft insert rule ip filter FORWARD position 0 oifname "lxcbr0" accept
+          echo inserted_oif
+        fi
+      args:
+        executable: /bin/bash
+      register: allow_lxc_forward
+      changed_when: "'inserted' in allow_lxc_forward.stdout"
+
     - name: Ensure all LXC containers are in stopped state
       community.general.lxc_container:
         name: "{{ item.key }}"
         state: stopped
       with_dict: "{{ lxcs }}"
       tags: create
+
+    - name: Configure static networking inside each LXC container rootfs
+      copy:
+        content: |
+          [Match]
+          Name=eth0
+
+          [Network]
+          Address={{ item.value.host }}/24
+          Gateway={{ lxc_network.gateway }}
+          {% for dns in lxc_dns %}
+          DNS={{ dns }}
+          {% endfor %}
+        dest: "/var/lib/lxc/{{ item.key }}/rootfs/etc/systemd/network/10-eth0.network"
+        owner: root
+        group: root
+        mode: 0644
+      with_dict: "{{ lxcs }}"
+
+    - name: Ensure netplan directory exists inside each LXC container rootfs
+      file:
+        path: "/var/lib/lxc/{{ item.key }}/rootfs/etc/netplan"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      with_dict: "{{ lxcs }}"
+
+    - name: Configure static netplan for each LXC container rootfs
+      copy:
+        content: |
+          network:
+            version: 2
+            ethernets:
+              eth0:
+                dhcp4: no
+                addresses: [{{ item.value.host }}/24]
+                gateway4: {{ lxc_network.gateway }}
+                nameservers:
+                  addresses: [{{ lxc_dns | join(', ') }}]
+        dest: "/var/lib/lxc/{{ item.key }}/rootfs/etc/netplan/50-lxc-static.yaml"
+        owner: root
+        group: root
+        mode: 0644
+      with_dict: "{{ lxcs }}"
 
     - name: Map the mailad folder inside the containers
       lineinfile:
@@ -126,16 +206,6 @@
         mode: 0644
       with_dict: "{{ lxcs }}"
 
-    - name: Reset dhcp leases for the LXC interface
-      ansible.builtin.file:
-        path: /var/lib/misc/dnsmasq.lxcbr0.leases
-        state: absent
-
-    - name: restart service
-      systemd:
-        state: restarted
-        name: lxc-net
-
     - name: Ensure all LXC containers are in started for the next steps
       community.general.lxc_container:
         name: "{{ item.key }}"
@@ -147,10 +217,9 @@
       debug:
         msg: "The IP address is {{ lxcs['dc'].host }}"
 
-    - name: Adjust DNS server in mail ones to point to DC
-      shell: echo "resolvectl dns eth0 {{ lxcs['dc'].host }}" | lxc-attach --name="{{ item.key }}" -- 
+    - name: Adjust DNS server in containers to use configured upstream resolvers
+      shell: echo "resolvectl dns eth0 {{ lxc_dns | join(' ') }}" | lxc-attach --name="{{ item.key }}" -- 
       with_dict: "{{ lxcs }}"
-      when: '"mail" in item.key'
       changed_when: False
 
     - name: Create the ubuntu source.list template
