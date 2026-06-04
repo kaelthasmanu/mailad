@@ -17,7 +17,7 @@
   vars:
     # Compute the MailAD repository root dynamically from the playbook location
     mailad_root_path: "{{ playbook_dir | dirname | dirname }}"
-    mailad_at: "{{ mailad_root_path }}"
+    mailad_at_path: "{{ mailad_at if mailad_at is defined and mailad_at | default('', true) | trim | length > 0 else mailad_root_path }}"
     mailad_container_mount: "/root/mailad"
 
   tasks:
@@ -83,17 +83,18 @@
         msg:
           - "Resolved playbook_dir: {{ playbook_dir }}"
           - "MailAD repo root: {{ mailad_root_path }}"
-          - "Mount source: {{ mailad_at }}"
+          - "Explicit mailad_at: {{ mailad_at | default('', true) }}"
+          - "Chosen mount source: {{ mailad_at_path }}"
           - "Container target: {{ mailad_container_mount }}"
 
     - name: Ensure MailAD source path exists
       stat:
-        path: "{{ mailad_at }}"
+        path: "{{ mailad_at_path }}"
       register: mailad_at_stat
 
     - name: Fail if MailAD source path does not exist
       fail:
-        msg: "MailAD source path not found at {{ mailad_at }}. Verify the repository is mounted and the playbook is located inside the MailAD repo."
+        msg: "MailAD source path not found at {{ mailad_at_path }}. Verify the repository is mounted and the playbook is located inside the MailAD repo."
       when: not mailad_at_stat.stat.exists
 
     - name: Check which LXC containers exist
@@ -133,7 +134,7 @@
       lineinfile:
         path: "/var/lib/lxc/{{ item.key }}/config"
         regexp: '^lxc\.mount\.entry.*$'
-        line: "lxc.mount.entry = {{ mailad_at }} {{ mailad_container_mount | trim }} none bind,create=dir 0 0"
+        line: "lxc.mount.entry = {{ mailad_at_path }} {{ mailad_container_mount | trim }} none bind,create=dir 0 0"
         owner: root
         group: root
         mode: 0640

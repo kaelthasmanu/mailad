@@ -9,18 +9,19 @@
 # misc
 timezone: "America/Havana"
 domain: mailad.cu
+mailad_at:  # path to the mailad folder on the host, will be mounted inside the containers, must be an absolute path
 
 # repo sources
 # I use a local nginx reverse proxy to cache all the files downloaded to speedup the process
-# if you want to use the official mirrors, just change the host to archive.ubuntu.com and deb.debian.org and remove the port
+# if you want use a local repo, add the port and address to the repo
 repos:
   arch: amd64
   ubuntu:
-    host: 192.168.1.102
-    port: 80
+    host: archive.ubuntu.com
+    port: #add port if using a local repo 
   debian:
-    host: 192.168.1.102
-    port: 80
+    host: deb.debian.org
+    port: #add port if using a local repo 
 
 # LXCs data
 # Warn: host must match that on the inventory
